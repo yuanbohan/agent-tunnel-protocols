@@ -24,7 +24,7 @@ It owns:
 - interactive session grant/denial/release
 - terminal snapshot and live-byte streams
 - mobile-to-daemon input and resize messages
-- transport path badges and diagnostics
+- transport path diagnostics
 
 It does not own:
 
@@ -82,9 +82,11 @@ One daemon connection uses:
 - one long-lived bidirectional control stream opened by the mobile client
 - zero or more daemon-initiated unidirectional interactive streams
 
-The control stream carries all typed control frames, including input and resize.
-Each interactive stream belongs to one granted interactive session lifetime and
-carries only snapshot and live terminal bytes from daemon to mobile.
+The control stream carries session metadata, preview, interactive control,
+input, resize, path diagnostics, and error frames. Each interactive stream
+belongs to one granted interactive session lifetime and carries only that
+session's snapshot boundary frames, snapshot chunks, and live terminal bytes
+from daemon to mobile.
 
 The same session does not support multiple concurrent interactive attach
 lifetimes in this revision.
@@ -98,6 +100,16 @@ Every control or interactive stream frame uses:
 ```
 
 `payload_length` is the byte length of the payload.
+
+`payload_length` uses the QUIC variable-length integer encoding: the two most
+significant bits of the first byte encode the total integer length (`00` = 1
+byte, `01` = 2 bytes, `10` = 4 bytes, `11` = 8 bytes), and the remaining bits
+encode an unsigned big-endian integer value.
+
+The maximum payload size is 1 MiB (`1 << 20`) per frame. Senders must split
+larger terminal snapshots or live output bursts across multiple
+`snapshot_chunk` or `live_bytes` frames. Receivers must reject frames whose
+declared payload length is larger than 1 MiB.
 
 Typed control payloads are JSON encoded as UTF-8. `snapshot_chunk` and
 `live_bytes` carry raw PTY bytes and are not JSON wrapped.
@@ -217,6 +229,9 @@ preview content can update independently.
 
 `interactive_stream_id` is the QUIC stream id of the daemon-initiated
 unidirectional stream that carries the interactive snapshot and live bytes.
+That stream begins with `snapshot_begin`, then zero or more `snapshot_chunk`
+frames, then `snapshot_end`; later `live_bytes` frames for the same interactive
+lifetime follow on the same stream.
 
 ### `interactive_denied`
 
@@ -260,7 +275,8 @@ Receivers must tolerate unknown `reason` values. Current known values are:
 - `relay_setup_latency_ms` (optional)
 
 `path_state` is advisory. The app connection manager remains the source of the
-current path badge.
+current path badge. Daemon transport reports diagnostics for the path that was
+used; it does not override app-side path selection or badge authority.
 
 ### `error`
 
@@ -271,6 +287,9 @@ Receivers must tolerate unknown `code` values.
 
 ### `snapshot_begin`
 
+Sent on the daemon-initiated interactive stream announced by
+`interactive_granted.interactive_stream_id`.
+
 - `session_id`
 - `cols`
 - `rows`
@@ -280,6 +299,9 @@ Receivers must tolerate unknown `code` values.
 Raw PTY snapshot bytes. No JSON wrapper.
 
 ### `snapshot_end`
+
+Sent on the same daemon-initiated interactive stream as the preceding
+`snapshot_begin` and `snapshot_chunk` frames.
 
 - `session_id` (optional)
 - `chunk_count` (optional)
