@@ -10,7 +10,7 @@ here.
 
 ## Connectivity Protocols
 
-- [Daemon transport](docs/connectivity/transport.md) defines the current
+- [Protocol](docs/protocol.md) defines the current
   daemon-to-mobile QUIC session transport, frame registry, JSON payload
   families, session metadata boundary, transport security invariants, and
   compatibility expectations.
