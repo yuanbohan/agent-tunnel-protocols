@@ -1,49 +1,51 @@
 # Relay Connectivity Control Plane
 
-## Status
+## 状态
 
-This document is the cross-repository source of truth for the Relay-owned
-connectivity control plane used by the official mobile companion and Go daemon.
+本文是 official mobile companion 和 Go daemon 使用的 Relay-owned connectivity control plane SSOT。
 
-Relay owns authentication, account context, live daemon presence,
-pairing-response routing, direct rendezvous hint exchange, fallback tunnel
-authorization, and opaque fallback packet forwarding. Relay does not own
-session discovery, previews, terminal bytes, input, resize, or interactive
-authorization.
+Relay 负责 authentication、account context、live daemon presence、pairing-response routing、direct rendezvous hint exchange、fallback tunnel authorization、opaque fallback packet forwarding。
 
-## Endpoint Inventory
+Relay 不负责 session discovery、preview、terminal bytes、input、resize、interactive authorization。
 
-App endpoints:
+流程图见：
+
+- [Computer List](draws/00-computer-list.md)
+- [Direct And Relay](draws/03-direct-relay-data-flow.md)
+
+## Endpoint 清单
+
+App endpoints：
 
 - `GET /api/connectivity/ws`
 - `POST /api/pairing/responses`
 - `GET /api/account/policy`
 - `POST /api/computers/:computerID/sessions`
 
-Daemon endpoints:
+Daemon endpoints：
 
 - `GET /connectivity/computer/ws`
 
-Fallback packet tunnel:
+Fallback packet tunnel：
 
 - `GET /connectivity/tunnel/ws`
 
-The old connectivity realtime aliases are not part of this compatibility line.
+旧 connectivity realtime aliases 不属于当前 compatibility line：
+
+- `GET /api/connectivity/app/ws`
+- `GET /connectivity/daemon/ws`
 
 ## App Authentication
 
-App-facing Relay endpoints use:
+App-facing Relay endpoints 使用：
 
 ```text
 Authorization: Bearer <app-access-token>
 ```
 
-The app access token is opaque to clients. Relay stores app session ownership
-server-side and binds that app session to the app client fingerprint supplied
-at login/refresh time.
+App access token 对 client 是 opaque。Relay 在 server-side 存 app session ownership，并把 app session 绑定到 login/refresh 时提供的 `client_fingerprint`。
 
-Relay uses `(account_id, app_session_id, client_fingerprint)` as the app-side
-identity for:
+Relay 用 `(account_id, app_session_id, client_fingerprint)` 作为 app-side identity，用于：
 
 - connectivity realtime registration
 - pairing response submission
@@ -52,70 +54,64 @@ identity for:
 - fallback tunnel requests
 - account policy reads
 
-If an app session has no bound client fingerprint, Relay must reject
-connectivity realtime.
+如果 app session 没有 bound client fingerprint，Relay 必须拒绝 connectivity realtime。
 
 ## Daemon Authentication
 
-Daemon connectivity realtime uses:
+Daemon connectivity realtime 使用：
 
 ```text
 Authorization: Bearer <agent-token>
 ```
 
-Relay binds the daemon socket to the account that owns the agent token.
-Daemon-local trust remains daemon-owned; Relay only receives the current live
-trusted roster during `computer_register` and later `pair_completed` /
-`client_revoked` events.
+Relay 把 daemon socket 绑定到 agent token 所属 account。Daemon-local trust 仍由 daemon 持有；Relay 只在 `computer_register` 和后续 `pair_completed` / `client_revoked` 中接收当前 live trusted roster。
 
 ## Shared JSON Envelope
 
-Realtime messages are JSON objects with:
+Realtime message 是 JSON object：
 
 - `type`
 - optional `protocol_version`
 - optional `request_id`
 - event-specific fields
 
-Current realtime protocol version:
+当前 realtime protocol version：
 
 ```text
 2
 ```
 
-Peers must tolerate unknown event types where the local implementation can
-safely ignore them. Relay should answer unsupported app commands with an
-`error` frame rather than closing a valid app socket.
+Peer 在安全可忽略时要 tolerate unknown event types。Relay 对 unsupported app commands 应返回 `error` frame，而不是关闭一个有效 app socket。
 
 ## App Realtime Socket
 
-The app opens:
+App 打开：
 
 ```text
 GET /api/connectivity/ws
 Authorization: Bearer <app-access-token>
 ```
 
-The first app frame must be:
+第一帧必须是：
 
 ```json
 {"type":"app_register","protocol_version":2}
 ```
 
-Relay then sends:
+Relay 随后发送：
 
 - `computer_snapshot`
 - later `computer_visible`
 - later `computer_removed`
 - later `client_revoked`
-- direct rendezvous and fallback events addressed to that app session
+- 发给该 app session 的 direct rendezvous 和 fallback events
 
-`computer_snapshot` fields:
+`computer_snapshot` fields：
 
 - `type`: `computer_snapshot`
 - `computers`: array of `ConnectivityComputer`
 
-`ConnectivityComputer` fields:
+`ConnectivityComputer` fields：
 
 - `computer_id`
 - `display_name`
@@ -125,19 +121,18 @@ Relay then sends:
 - `computer_fingerprint`
 - `tunnel_version`
 
-Relay computes visible computers by matching the authenticated app account and
-client fingerprint against the live daemon trusted roster.
+Relay 通过 authenticated app account + client fingerprint 和 live daemon trusted roster 匹配，计算 visible computers。
 
 ## Daemon Realtime Socket
 
-The daemon opens:
+Daemon 打开：
 
 ```text
 GET /connectivity/computer/ws
 Authorization: Bearer <agent-token>
 ```
 
-The first daemon frame must be `computer_register`:
+第一帧必须是 `computer_register`：
 
 ```json
 {
@@ -167,40 +162,39 @@ The first daemon frame must be `computer_register`:
 }
 ```
 
-Relay uses this to rebuild live visibility after daemon reconnect. Relay does
-not persist `trusted_clients` durably.
+Relay 使用这个 registration 在 daemon reconnect 后重建 live visibility。Relay 不 durable persist `trusted_clients`。
 
 ## Pairing Event Family
 
-Daemon to Relay:
+Daemon to Relay：
 
 - `pair_invitation_reserve`
 - `pair_completed`
 - `client_revoked`
 
-Relay to daemon:
+Relay to daemon：
 
 - `pair_invitation_reserved`
 - `pair_response_forward`
 - `error`
 
-App to Relay:
+App to Relay：
 
 - `POST /api/pairing/responses`
 
-Relay to app:
+Relay to app：
 
 - `computer_visible`
 - `client_revoked`
 - `computer_removed`
 
-Pairing transcript and SAS rules are defined in [pairing.md](pairing.md).
+Pairing transcript 和 SAS 规则见 [pairing.md](pairing.md)。
 
 ## Direct Rendezvous Event Family
 
-Direct attempts exchange UDP candidate hints through Relay realtime.
+Direct attempts 通过 Relay realtime 交换 UDP candidate hints。
 
-App sends `rendezvous_open`:
+App 发送 `rendezvous_open`：
 
 ```json
 {
@@ -213,10 +207,9 @@ App sends `rendezvous_open`:
 }
 ```
 
-Relay forwards a client-origin `rendezvous_hint` to the daemon with the
-authenticated `client_fingerprint`.
+Relay 把 client-origin `rendezvous_hint` 转发给 daemon，并附上 authenticated `client_fingerprint`。
 
-Daemon replies with a daemon-origin `rendezvous_hint`:
+Daemon 回复 daemon-origin `rendezvous_hint`：
 
 ```json
 {
@@ -232,28 +225,21 @@ Daemon replies with a daemon-origin `rendezvous_hint`:
 }
 ```
 
-Either side may send `rendezvous_close`. After direct QUIC accept succeeds,
-the daemon sends `direct_session_open`. Relay records that direct won the
-attempt. When authorization is revoked, Relay may send `direct_session_close`
-to the daemon so direct transports tied to the revoked live authorization close
-promptly.
+任意一侧可发送 `rendezvous_close`。Direct QUIC accept 成功后，daemon 发送 `direct_session_open`，Relay 记录 direct 已赢得该 attempt。授权撤销时，Relay 可以发送 `direct_session_close` 给 daemon，让绑定该 live authorization 的 direct transport 尽快关闭。
 
-Rendezvous rules:
+Rendezvous rules：
 
-- `attempt_id` is minted by the app per connection attempt
-- hints are short-lived; current implementation default is 30 seconds
-- a newer attempt for the same app session and computer supersedes older live
-  attempt state
-- candidate lists must be bounded
-- private candidate addresses should be limited to private, link-local, or
-  explicitly test-allowed ranges
+- `attempt_id` 由 app 每次 connection attempt 生成。
+- hints 是 short-lived；当前实现默认 30 seconds。
+- 同一 app session + computer 的新 attempt 会 supersede 老 attempt。
+- candidate list 必须有上限。
+- private candidate addresses 应限制在 private、link-local 或明确 test-allowed ranges。
 
-Relay may route candidate hints, but it must not derive terminal/session
-semantics from them.
+Relay 可以 route candidate hints，但不得从中推导 terminal/session semantics。
 
 ## Fallback Relay Tunnel Event Family
 
-App sends `relay_tunnel_request` after direct is skipped, fails, or times out:
+App 在 direct skipped、failed 或 timeout 后发送 `relay_tunnel_request`：
 
 ```json
 {
@@ -266,11 +252,9 @@ App sends `relay_tunnel_request` after direct is skipped, fails, or times out:
 }
 ```
 
-Relay authorizes fallback only when the authenticated app account and bound
-client fingerprint currently have pairing-derived visibility to the online
-daemon.
+Relay 只在 authenticated app account + bound client fingerprint 当前对 online daemon 有 pairing-derived visibility 时授权 fallback。
 
-Relay sends side-specific `relay_tunnel_ready` frames:
+Relay 发送 side-specific `relay_tunnel_ready`：
 
 ```json
 {
@@ -286,49 +270,41 @@ Relay sends side-specific `relay_tunnel_ready` frames:
 }
 ```
 
-The daemon receives a different token with `actor: "daemon"`.
+Daemon 收到另一枚 token，`actor: "daemon"`。
 
-Tunnel-token rules:
+Tunnel-token rules：
 
-- one token per side
-- short-lived
-- single-use
-- bound to attempt id, account, app session, client fingerprint, target
-  computer, actor identity, and actor type
-- invalidated on expiry, disconnect, logout, token revocation, user deletion,
-  daemon disconnect, superseding attempts, or trusted-device revocation
+- 每侧一枚 token。
+- short-lived。
+- single-use。
+- 绑定 attempt id、account、app session、client fingerprint、target computer、actor identity、actor type。
+- 在 expiry、disconnect、logout、token revocation、user deletion、daemon disconnect、superseding attempt、trusted-device revocation 时失效。
 
 ## Fallback Packet Tunnel
 
-Both sides redeem their tokens at:
+两端使用各自 token 连接：
 
 ```text
 GET /connectivity/tunnel/ws
 Authorization: Bearer <single-use-token>
 ```
 
-The WebSocket carries binary messages only. Each binary message is one opaque
-encrypted QUIC packet. Relay pairs the client and daemon endpoints for the same
-attempt and forwards binary packets unchanged.
+WebSocket 只承载 binary messages。每个 binary message 是一个 opaque encrypted QUIC packet。Relay 按同一 attempt 关联 client/daemon endpoints，并原样转发 binary packets。
 
-Relay must close the tunnel on text messages, invalid tokens, token reuse,
-authorization revocation, peer disconnect, or tunnel expiry.
+Relay 必须在 text message、invalid token、token reuse、authorization revocation、peer disconnect 或 tunnel expiry 时关闭 tunnel。
 
 ## Account Policy Surface
 
-Relay exposes account policy to the app through authenticated app APIs. Current
-mobile product policy uses:
+Relay 通过 authenticated app API 暴露 account policy。当前 mobile product policy 使用：
 
-- `free`: app may keep one active trusted computer
-- `pro`: app may keep up to ten active trusted computers
+- `free`: app 可以保留 1 台 active trusted computer
+- `pro`: app 可以保留最多 10 台 active trusted computers
 
-Relay does not issue per-session grants, does not decide which daemon session
-row can be opened, and does not send tier policy to daemons in this
-compatibility line.
+Relay 不发 per-session grants，不决定哪条 daemon session row 可打开，也不在当前 compatibility line 给 daemon 发送 tier policy。
 
 ## Relay Must Not Carry
 
-Relay realtime and fallback tunnel payloads must not carry plaintext:
+Relay realtime 和 fallback tunnel payload 不得承载 plaintext：
 
 - session list
 - recent output preview text
@@ -337,22 +313,20 @@ Relay realtime and fallback tunnel payloads must not carry plaintext:
 - mobile input
 - resize payloads
 - daemon-side interactive grants
-- daemon session metadata from the QUIC transport
+- daemon session metadata from QUIC transport
 
-Those belong to the pinned daemon transport defined in [protocol.md](protocol.md).
+这些属于 [protocol.md](protocol.md) 定义的 pinned daemon transport。
 
-## Failure Semantics
+## Failure 语义
 
-Relay failure can prevent:
+Relay failure 会影响：
 
-- sign-in and token refresh
+- sign-in / token refresh
 - new pairing
-- current trusted-computer visibility updates
+- 当前 trusted-computer visibility updates
 - new direct rendezvous
 - new fallback tunnel setup
 - mobile-created launch requests
 - account policy refresh
 
-Relay failure does not let Relay read daemon transport payloads. Existing
-direct transports may continue until their own daemon/app path closes or
-authorization revocation is delivered through another mechanism.
+Relay failure 不让 Relay 获得读取 daemon transport payload 的能力。现有 direct transport 可以继续，直到自身 path 关闭，或授权撤销通过其他机制传达到 endpoint。

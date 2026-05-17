@@ -1,47 +1,30 @@
 # agent-tunnel-protocols
 
-Canonical cross-repository protocol documents for Agent Tunnel.
+Agent Tunnel 跨仓库协议文档的 SSOT。
 
-This repository is the source of truth for protocol decisions shared by the
-mobile companion, Relay/server implementation, and Go tunnel/daemon
-implementation. Implementation repositories keep local mirrors, tests, and
-operational notes, but protocol-level compatibility decisions should point back
-here.
+这个仓库保存 Android companion、Relay/server、Go tunnel/daemon 共享的协议、数据流、安全边界和兼容性决策。实现仓库可以保留本地实现说明、测试入口和运维记录，但 shared protocol 的事实要指向这里。
 
-## Sibling Implementation Repositories
+## 本地 sibling 仓库
 
-For local cross-repository work, keep these sibling checkouts together:
+跨仓库工作时，建议保持这些 checkout 并列：
 
-- `../agent-tunnel` - Go Relay, tunnel daemon, STUN, direct UDP, fallback
-  tunnel, pairing state, and daemon transport implementation.
-- `../agent-tunnel-android` - official Android companion implementation and
-  mobile UX/docs.
+- `../agent-tunnel` - Go Relay、tunnel daemon、STUN、direct UDP、fallback tunnel、pairing state、daemon transport 实现。
+- `../agent-tunnel-android` - official Android companion 实现和 mobile UX/docs。
 
-Protocol changes here should usually be paired with implementation or pointer
-updates in one or both implementation repositories.
+改动这里的 protocol 文档时，通常也需要在一个或两个实现仓库里同步实现、测试或本地指针。
 
-## Connectivity Protocols
+## 文档入口
 
-- [End-to-End Flows](docs/end-to-end-flows.md) explains the current trusted
-  computer, pairing, session list, preview, direct/relay, detail input, and
-  key-storage flows across Android, Relay, and the daemon.
-- [Pairing](docs/pairing.md) defines the Ed25519 pairing transcripts, Relay
-  pairing transport boundary, SAS algorithm, trust completion, persistence,
-  and revocation semantics.
-- [Relay Control Plane](docs/relay-control-plane.md) defines Relay realtime
-  auth, presence, pairing forwarding, direct rendezvous, fallback tunnel token
-  setup, and opaque packet forwarding.
-- [Protocol](docs/protocol.md) defines the current
-  daemon-to-mobile QUIC session transport, frame registry, JSON payload
-  families, session metadata boundary, transport security invariants, and
-  compatibility expectations.
+- [End-To-End Flows](docs/end-to-end-flows.md) - trusted computer list、pairing、session list、recent output preview、direct/relay、detail input、key storage、卸载后重新 pairing。
+- [Draws](docs/draws/README.md) - 上面关键流程的 Mermaid 流程图和 sequence diagram。
+- [Relay API](docs/api.md) - 当前 public Relay API、auth、endpoint、WebSocket、fallback tunnel、removed endpoints。
+- [Architecture](docs/architecture.md) - `tunnel run`、daemon、Relay、PostgreSQL、local broker、mobile companion 的系统结构。
+- [Pairing](docs/pairing.md) - Ed25519 pairing transcript、Relay forwarding、SAS、trust completion、persistence、revocation。
+- [Relay Control Plane](docs/relay-control-plane.md) - Relay realtime auth、presence、pairing forwarding、direct rendezvous、fallback tunnel token、opaque packet forwarding。
+- [Daemon Transport Protocol](docs/protocol.md) - daemon-to-mobile QUIC transport、frame registry、payload、stream、security invariants、direct/relay carrier boundary。
 
-## Repository Rules
+## 仓库规则
 
-- Keep fixtures synthetic and non-secret. Do not commit real terminal captures,
-  credentials, private keys, tunnel tokens, device fingerprints, private paths,
-  or user input.
-- Protocol-breaking changes must update the owning document and describe the
-  compatibility line or protocol version transition.
-- Relay remains content-opaque for terminal bytes and fallback QUIC packets
-  unless a future protocol decision explicitly changes that boundary.
+- Fixture 必须是 synthetic 且不包含 secret。不要提交真实 terminal capture、credential、private key、tunnel token、device fingerprint、private path 或 user input。
+- Protocol-breaking change 必须更新负责该 surface 的文档，并说明 compatibility line 或 protocol version 迁移。
+- Relay 对 terminal bytes 和 fallback QUIC packets 保持 content-opaque，除非未来明确修改 protocol boundary。

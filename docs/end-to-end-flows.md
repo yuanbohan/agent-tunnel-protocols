@@ -1,169 +1,141 @@
-# Connectivity End-To-End Flows
+# Connectivity 端到端流程
 
-## Status
+## 状态
 
-This document is the cross-repository source of truth for the user-visible
-connectivity flows shared by the Android companion, Relay/server
-implementation, and Go tunnel/daemon implementation.
+本文是 Android companion、Relay/server、Go tunnel/daemon 共享的端到端流程 SSOT。
 
-It explains how the protocol documents fit together:
+配套图文说明在 [draws](draws/README.md)：
 
-- pairing and long-lived trust: [pairing.md](pairing.md)
-- Relay realtime, presence, rendezvous, and fallback setup:
-  [relay-control-plane.md](relay-control-plane.md)
-- daemon-to-mobile QUIC session transport: [protocol.md](protocol.md)
+- [0. Computer List](draws/00-computer-list.md)
+- [1. Pairing](draws/01-pairing.md)
+- [2. Session List And Preview](draws/02-session-list-preview.md)
+- [3. Direct And Relay](draws/03-direct-relay-data-flow.md)
+- [4. Detail Input](draws/04-detail-input.md)
 
-Implementation repositories may keep local notes, tests, and operational
-guides, but protocol and data-flow decisions should point back here.
+更细的协议文档：
 
-## Actors And Repositories
+- [API](api.md)
+- [Architecture](architecture.md)
+- [Pairing](pairing.md)
+- [Relay Control Plane](relay-control-plane.md)
+- [Daemon Transport Protocol](protocol.md)
 
-- Android companion (`agent-tunnel-android`): app login, client identity,
-  secure local stores, pairing UI, trusted-computer list, direct-first
-  connection manager, Relay fallback packet carrier, session list, previews,
-  and session detail UI.
-- Go tunnel/daemon/Relay/STUN (`agent-tunnel`): Relay HTTP/WebSocket control
-  plane, Binding-only STUN service, local tunnel daemon, local broker,
-  pairing state, trusted client roster, direct UDP accept path, fallback packet
-  tunnel, and daemon session transport.
-- Protocol SSOT (`agent-tunnel-protocols`): cross-repository protocol,
-  security, and compatibility decisions.
+## 参与模块
 
-## 0. Trusted Computer List
+- Android companion (`agent-tunnel-android`)：app login、client identity、安全本地存储、pairing UI、trusted computer list、direct-first connection manager、Relay fallback packet carrier、session list、preview、session detail。
+- Go tunnel/daemon/Relay/STUN (`agent-tunnel`)：Relay HTTP/WebSocket control plane、Binding-only STUN、local daemon、local broker、pairing state、trusted client roster、direct UDP accept path、fallback packet tunnel、daemon transport。
+- Protocol SSOT (`agent-tunnel-protocols`)：跨仓库协议、安全、数据流和兼容性决策。
 
-The trusted computer list is the intersection of local app trust, Relay-visible
-daemon presence, and account policy.
+## 0. 怎么看到 Computer List
 
-Android maintains a protected local `TrustedComputerStore` scoped by:
+Computer list 不是单纯从 Relay 拉一个 durable list。它是三类状态的交集：
+
+- Android 本地 `TrustedComputerStore`
+- Relay live presence
+- account policy
+
+Android 本地的 trusted computer record 用 protected storage 保存，并按这些字段隔离：
 
 - `account_id`
 - `relay_base_url`
 - `computer_id`
 - daemon fingerprint
 
-Relay maintains live-only visibility. A daemon becomes visible to one app
-session only when all of these are true:
+Relay 只保存 live visibility。一个 daemon 对某个 app session 可见，需要同时满足：
 
-1. The app is authenticated with a Relay app bearer token.
-2. The app session is bound server-side to the app client fingerprint.
-3. The daemon is authenticated with an agent token owned by the same account.
-4. The daemon registered on `GET /connectivity/computer/ws`.
-5. The daemon registration contains a trusted client roster that includes the
-   app client's fingerprint, or a valid `pair_completed` event created that
-   live visibility grant.
+1. App 使用 app bearer token 登录。
+2. Relay 里的 app session 已绑定 `client_fingerprint`。
+3. Daemon 使用同一 account 下的 agent token 连接。
+4. Daemon 已注册 `GET /connectivity/computer/ws`。
+5. Daemon 的 `trusted_clients` roster 包含该 app 的 `client_fingerprint`，或者刚通过 `pair_completed` 建立了 live visibility。
 
-Android opens `GET /api/connectivity/ws`, sends:
+Android 打开：
+
+```text
+GET /api/connectivity/ws
+Authorization: Bearer <app-access-token>
+```
+
+第一帧发送：
 
 ```json
 {"type":"app_register","protocol_version":2}
 ```
 
-Relay replies with `computer_snapshot` and later emits `computer_visible`,
-`computer_removed`, and `client_revoked`.
+Relay 返回 `computer_snapshot`，之后推送 `computer_visible`、`computer_removed`、`client_revoked`。
 
-The Android list projection does not treat Relay presence as durable trust.
-It joins:
+Android 不能只信 Relay presence。UI projection 会 join：
 
-- local trusted records from protected storage
-- Relay realtime computers matched by `(computer_id, computer_fingerprint)`
-- account policy (`free` or `pro`)
-- per-computer daemon connection state
+- protected local trusted records
+- Relay realtime computers，按 `(computer_id, computer_fingerprint)` 匹配
+- account policy (`free` / `pro`)
+- 每台 computer 的 daemon connection state
 
-Local trust without Relay presence is shown as offline. Relay presence without
-matching local trust is not enough to create a trusted-computer row. Once a
-trusted computer is both locally trusted and Relay-visible, Android may start a
-daemon connection for that computer.
+本地 trusted 但 Relay 不可见，就显示 offline。Relay 可见但本地没有 trusted record，不会显示成 trusted computer。只有两边都匹配后，Android 才会为这台 computer 启动 daemon connection。
 
-## 1. Pairing Flow
+## 1. Pairing 详细流程
 
-Pairing binds one Android app installation to one daemon computer identity.
-Relay transports messages but is not the trust authority.
+Pairing 的目标是把一个 Android app installation 绑定到一个 daemon computer identity。Relay 负责传递消息和提供 authenticated account context，但不是 trust root。
 
-High-level flow:
+高层流程：
 
-1. The user runs `tunnel pair` on the computer.
-2. The daemon reserves a short-lived pairing correlation through Relay using
-   `pair_invitation_reserve`.
-3. Relay replies with `pair_invitation_reserved`, including the authenticated
-   account id and correlation id.
-4. The daemon creates a version `2` signed invitation, persists invitation state
-   locally, and prints a QR/paste payload.
-5. Android imports the invitation and verifies version, expiry, account id,
-   daemon fingerprint, and the daemon Ed25519 signature.
-6. Android loads or creates its app client Ed25519 identity, signs the Android
-   response transcript, and submits it to Relay with
-   `POST /api/pairing/responses`.
-7. Relay verifies the app bearer session, checks that the submitted
-   `account_id` and `client_fingerprint` match the authenticated app session,
-   and forwards the response to the daemon as `pair_response_forward`.
-8. The daemon verifies the Android Ed25519 signature, computes the 6-digit SAS,
-   and stores the response as pending.
-9. Both sides display the same SAS derived from the pairing transcript.
-10. The user confirms the SAS on the daemon CLI.
-11. The daemon persists the trusted Android client and sends `pair_completed`
-    to Relay.
-12. Relay emits `computer_visible` to matching app peers.
-13. Android waits until that paired computer is visible, then persists the
-    daemon trust record locally and clears pending pairing state.
+1. 用户在电脑上执行 `tunnel pair`。
+2. Daemon 通过 Relay `pair_invitation_reserve` 预留一个短期 correlation。
+3. Relay 返回 `pair_invitation_reserved`，包含 authenticated `account_id` 和 correlation。
+4. Daemon 创建 version `2` signed invitation，写入本地 invitation state，并打印 QR/paste payload。
+5. Android 导入 invitation，验证 version、expiry、account id、daemon fingerprint、daemon Ed25519 signature。
+6. Android 读取或生成自己的 Ed25519 client identity，签名 Android response transcript。
+7. Android 调 `POST /api/pairing/responses` 提交 response。
+8. Relay 验证 app bearer session、`account_id`、`client_fingerprint`，然后以 `pair_response_forward` 转发给 daemon。
+9. Daemon 验证 Android Ed25519 signature，计算 6 位 SAS，并把 response 存为 pending。
+10. 两端显示相同 SAS。
+11. 用户在 daemon CLI 上确认 SAS。
+12. Daemon 持久化 trusted Android client，并向 Relay 发送 `pair_completed`。
+13. Relay 向匹配的 app peer 推 `computer_visible`。
+14. Android 等到 paired computer visible 后，才把 daemon trust record 写入本地 trusted store，并清理 pending pairing。
 
-Detailed canonical transcripts, signatures, SAS, persistence, and revocation
-rules are defined in [pairing.md](pairing.md).
+关键安全点：
 
-Security summary:
+- 长期 device identity 和 pairing signature 使用 Ed25519。
+- `fingerprint = SHA-256(raw_ed25519_public_key)`，lowercase hex。
+- SAS 使用 `SHA-256` 计算，输入是 length-prefixed daemon key、client key、invitation id、nonce；取 digest 前 4 字节 big-endian uint32 后 `mod 1_000_000`，显示为 6 位数字。
+- Pairing 不产生长期 symmetric secret，只产生 pinned peer identities。
+- 后续 transport 用 pinned identity 认证新的 TLS 1.3 handshake，session key 每次连接都是新的。
+- Relay 可以拒绝或延迟消息，但不能改 signed transcript field；否则 signature 会失败。
+- SAS 必须由用户 out-of-band 对比，不能让 Relay 自动比较。
 
-- Long-lived device identity and pairing signatures use Ed25519.
-- Public-key fingerprints are `SHA-256(raw_ed25519_public_key)` encoded as
-  lowercase hex.
-- The SAS is `SHA-256` over length-prefixed daemon key, client key,
-  invitation id, and nonce, truncated to a 6-digit decimal code by taking the
-  first four digest bytes as a big-endian integer modulo `1_000_000`.
-- Pairing does not create a long-lived symmetric secret. It creates pinned peer
-  identities that later authenticate fresh TLS 1.3 handshakes.
-- Relay can withhold or forward pairing messages, but it cannot rewrite signed
-  transcript fields without breaking signatures.
-- A network-side SAS comparison is not trusted; the user compares the code
-  out-of-band.
+## 2. Pairing 后怎么看 Session List 和 Recent Output Preview
 
-## 2. Session List And Recent Output Preview
+Relay 不是 session authority。Relay 可以请求某台 online computer launch session，但 mobile companion 的 session rows 和 preview 来自 daemon transport。
 
-Relay is not the session authority. It may launch a session on an online
-computer, but the official mobile companion receives session rows and previews
-from the selected daemon transport.
+已经 trusted 且 visible 的 computer：
 
-For an already trusted and visible computer:
+1. Android 先尝试 direct daemon connection。
+2. 如果 direct 不可用，再 fallback 到 Relay packet tunnel。
+3. 无论 direct 还是 fallback，都建立同一套 pinned QUIC/TLS daemon transport。
+4. Android 发 `hello`。
+5. Daemon 验证 pinned client identity，回 `hello`。
+6. Daemon 发送 `session_index`，包含这台 computer 当前全部 mobile-visible session metadata。
+7. Android 渲染 computer section 和 session rows。
+8. Android 只给可见 rows 发送 `preview_subscribe`。
+9. Daemon 对 subscribed sessions 发送 `preview_snapshot`，之后通过 `session_upsert` / `session_gone` 同步变化。
 
-1. Android starts a direct-first daemon connection.
-2. The chosen path establishes the daemon transport defined in
-   [protocol.md](protocol.md).
-3. Android sends daemon transport `hello`.
-4. The daemon validates the pinned client identity and sends daemon `hello`.
-5. The daemon sends `session_index` with the full current session metadata for
-   that computer.
-6. Android renders one computer section with daemon session rows.
-7. Android subscribes only to visible row previews with `preview_subscribe`.
-8. The daemon sends `preview_snapshot` for subscribed sessions and later
-   `session_upsert` / `session_gone` deltas as local broker state changes.
+Mobile-created launch：
 
-For a mobile-created launch:
+1. Android 调 `POST /api/computers/:computerID/sessions`。
+2. Relay 把 launch request 转给 online daemon。
+3. Daemon 启动 tmux-backed `tunnel run`。
+4. 新 `tunnel run` 注册 local broker 和 `/agent/ws`，并发送 `launch_ready`。
+5. Relay 返回 `session_ready` 和 `session_id`。
+6. Android 把这个 `session_id` 当 correlation key；真正可见 row 必须等 daemon transport 的 `session_index` 或 `session_upsert`。
 
-1. Android asks Relay to launch with `POST /api/computers/:computerID/sessions`.
-2. Relay routes the request to the online daemon.
-3. The daemon starts a tmux-backed `tunnel run` and waits for local broker plus
-   Relay launch readiness.
-4. Relay returns `session_ready` with a `session_id`.
-5. Android treats that `session_id` as a correlation key only. The visible row
-   must still arrive from daemon transport `session_index` or `session_upsert`.
+List 底部区域叫 recent output preview，不是 chat message。Preview text 是独立 daemon transport payload，不能塞进 `SessionMetadata`。
 
-The list preview area is a recent output preview, not a chat message. Preview
-text is a separate daemon transport payload and must not be embedded inside
-`SessionMetadata`.
+## 3. Direct 和 Relay 的数据流向
 
-## 3. Direct And Relay Data Flow
+Direct 和 Relay fallback 只差 QUIC 下面的 packet carrier。上层 daemon session protocol 完全一样。
 
-Direct and Relay fallback use the same daemon session protocol. Only the packet
-carrier below QUIC changes.
-
-Direct path:
+Direct path：
 
 ```text
 Android app
@@ -175,12 +147,12 @@ Android app
   -> daemon transport frames
 ```
 
-Relay fallback path:
+Relay fallback path：
 
 ```text
 Android app
   -> Relay app realtime: relay_tunnel_request
-  -> Relay issues single-use side-specific tunnel tokens
+  -> Relay issues side-specific single-use tunnel tokens
   -> Android opens /connectivity/tunnel/ws with client token
   -> daemon opens /connectivity/tunnel/ws with daemon token
   -> Relay forwards binary WebSocket messages as opaque QUIC packets
@@ -188,95 +160,68 @@ Android app
   -> daemon transport frames
 ```
 
-Relay fallback is not less secure than direct at the daemon transport layer:
+Relay fallback 在 transport security 上不比 direct 弱：
 
-- both paths use the same pinned peer identities
-- both paths negotiate fresh TLS 1.3 session keys
-- Relay fallback forwards encrypted QUIC packets only
-- Relay must not parse QUIC, terminal bytes, previews, snapshots, input,
-  resize, path badges, or daemon session semantics
+- 两条路径都用相同 pinned peer identities。
+- 两条路径都协商新的 TLS 1.3 session keys。
+- Relay fallback 只转发 encrypted QUIC packets。
+- Relay 不解析 QUIC、terminal bytes、preview、snapshot、input、resize、path badge 或 daemon session semantics。
 
-Relay can degrade availability by withholding rendezvous hints or refusing
-fallback setup. Relay cannot decrypt direct or fallback daemon transport
-payloads.
+Relay 可以影响可用性，例如不转发 rendezvous hints 或拒绝 fallback setup；但不能解密 direct 或 fallback 的 daemon transport payload。
 
-## 4. Session Detail And Mobile Input
+## 4. 进入 Detail 后，移动端发送消息怎么走
 
-Opening session detail attaches to one daemon session through the already
-connected trusted-computer transport.
+Session detail attach 到一个已连接 trusted computer transport。
 
-The attach flow is path-agnostic:
+Attach 流程：
 
-1. Android decodes the route identity into `(computer_id, daemon_fingerprint,
-   attempt_id, session_id)`.
-2. Android sends `interactive_request` on the daemon transport control stream
-   with the target `session_id` and initial terminal `cols` / `rows`.
-3. The daemon broker grants exactly one interactive owner for that session
-   lifetime or denies with a stable reason such as `session_unavailable` or
-   `daemon_busy`.
-4. On grant, the daemon sends `interactive_granted` on the control stream and
-   opens a daemon-initiated unidirectional interactive stream.
-5. The interactive stream sends `snapshot_begin`, zero or more
-   `snapshot_chunk` frames, `snapshot_end`, and then `live_bytes`.
-6. Android renders snapshot and live bytes through the terminal pipeline.
-7. Android enables input only after the snapshot completes.
+1. Android route identity 解出 `(computer_id, daemon_fingerprint, attempt_id, session_id)`。
+2. Android 在 daemon transport control stream 发送 `interactive_request`，带 `session_id` 和初始 `cols` / `rows`。
+3. Daemon broker 只给该 session lifetime 一个 interactive owner；如果不可用则 `interactive_denied`。
+4. Grant 成功后，daemon 在 control stream 发 `interactive_granted`，并打开 daemon-initiated unidirectional interactive stream。
+5. Interactive stream 发送 `snapshot_begin`、多个 `snapshot_chunk`、`snapshot_end`，之后发送 `live_bytes`。
+6. Android 用 terminal pipeline 渲染 snapshot 和 live bytes。
+7. Android 在 snapshot complete 后才启用 input。
 
-Mobile input never travels on the interactive stream. It is sent on the control
-stream:
+Mobile input 永远不走 interactive stream，而是走 control stream：
 
-- normal typing, pasted text, IME committed text, draft sync, and submit use
-  `input_text`
-- special keys use `input_key`
-- protocol-level resize uses `resize`
-- release uses `interactive_release`
+- 普通输入、paste、IME commit、draft sync、submit：`input_text`
+- special key：`input_key`
+- protocol-level terminal geometry：`resize`
+- 离开 detail：`interactive_release`
 
-The daemon validates that the sender currently owns an active interactive grant
-for that session before routing input to the local broker and PTY owner.
+Daemon 收到 input 前会验证该 client 当前确实拥有 active interactive grant，然后才转给 local broker 和 PTY owner。
 
-Current Android detail behavior sends the initial geometry in
-`interactive_request` and routes text/key input through the control stream.
-The protocol supports `resize`; implementation repositories should not claim
-live Android geometry updates are emitted unless that UI path is wired in code.
+当前 Android detail 实现会在 `interactive_request` 里发送初始 geometry，并通过 control stream 发送 text/key input。Protocol 支持 `resize`，但不要声称 Android 已经发送 live geometry resize frame，除非 UI path 确实接上线并通过验证。
 
-## 5. Key Storage, App Uninstall, And Re-Pairing
+## 5. Key Storage、卸载 App、为什么要重新 Pairing
 
-Android stores the client identity and trust state in app-local protected
-storage:
+Android 使用 app-local protected storage：
 
-- primary client Ed25519 identity: Android Keystore key pair
-- fallback client signing identity: encrypted seed in AndroidX
-  `EncryptedSharedPreferences`
-- trusted computers: encrypted local store scoped by account and relay base URL
-- pending pairing: encrypted local store
-- Relay credentials: encrypted local config store
+- primary Ed25519 client identity：Android Keystore key pair
+- fallback client signing identity：AndroidX `EncryptedSharedPreferences` 里的 encrypted seed
+- trusted computers：按 account 和 relay base URL 隔离的 encrypted local store
+- pending pairing：encrypted local store
+- Relay credentials：encrypted local config store
 
-The daemon stores local connectivity identity and pairing state under
-daemon-local state, with private file permissions:
+Daemon 使用本地 private state：
 
-- daemon Ed25519 connectivity identity
+- Ed25519 connectivity identity
 - invitation records
 - pending pairing responses
 - trusted Android client roster
 - revoked client records
 
-Relay does not keep the durable trusted-client database. It keeps live
-authorization/routing state derived from authenticated app sessions, daemon
-registrations, pairing correlations, direct rendezvous attempts, direct session
-records, and fallback tunnel tokens.
+Relay 不保存 durable trusted-client database，只保存 live auth/routing state，例如 app sessions、daemon registrations、pairing correlations、direct rendezvous attempts、direct session records、fallback tunnel tokens。
 
-When the Android app is uninstalled, Android removes app data and the app's
-Keystore entries. The reinstalled app therefore has:
+Android app 卸载后，系统会删除 app data 和该 app 的 Keystore entries。重新安装后的 app：
 
-- no previous client private key
-- a new client public key and fingerprint
-- no local trusted-computer records
-- no pending pairing records
-- no Relay app session tokens
+- 没有旧 client private key
+- 会有新的 client public key 和 fingerprint
+- 没有本地 trusted-computer records
+- 没有 pending pairing records
+- 没有 Relay app session tokens
 
-The daemon may still have the old client fingerprint in its trusted roster, but
-the reinstalled app cannot prove possession of that old private key and cannot
-authenticate as that old fingerprint. The user must sign in and pair again.
+Daemon 可能还保存旧 client fingerprint，但新 app 无法证明自己拥有旧 private key，也无法用旧 fingerprint 通过 daemon transport authentication。用户必须重新 sign in 和 pairing。
 
-This is intentional. Restoring trust without the original device private key
-would let a reinstall or backup restore impersonate a previously trusted
-client installation.
+这是故意的安全边界。如果卸载/备份恢复后不需要原 private key 就能恢复 trust，就等于允许一个新安装伪装成旧 trusted client。

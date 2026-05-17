@@ -1,64 +1,60 @@
-# Connectivity Pairing Protocol
+# Connectivity Pairing 协议
 
-## Status
+## 状态
 
-This document is the cross-repository source of truth for pairing one mobile
-client installation with one computer daemon.
+本文是 mobile client installation 和 computer daemon pairing 的跨仓库 SSOT。
 
-Pairing establishes durable pinned peer identities. It does not create a
-long-lived symmetric shared secret and it does not make Relay a trust root.
+Pairing 建立 durable pinned peer identities。它不创建长期 symmetric shared secret，也不让 Relay 成为 trust root。
 
-## Goals
+流程图见 [draws/01-pairing.md](draws/01-pairing.md)。
 
-- bind one mobile client installation to one computer daemon identity
-- keep the daemon and mobile endpoints as the trust roots
-- use Relay only for authenticated account context and message transport
-- produce pinned identities for later QUIC/TLS daemon transport connections
-- make network key substitution detectable through a human-confirmed SAS
+## 目标
 
-## Device Identity Model
+- 把一个 mobile client installation 绑定到一个 computer daemon identity。
+- 保持 daemon 和 mobile endpoints 作为 trust roots。
+- Relay 只负责 authenticated account context 和 message transport。
+- 产出后续 QUIC/TLS daemon transport 使用的 pinned identities。
+- 用 human-confirmed SAS 发现 network-side public-key substitution。
 
-Each endpoint owns one persistent Ed25519 identity key pair.
+## Device Identity 模型
 
-Daemon:
+两端各自持有一个 persistent Ed25519 identity key pair。
 
-- stores its connectivity identity in daemon-local state
-- signs invitations
-- authenticates later daemon transports with a self-signed Ed25519
-  certificate whose SubjectPublicKeyInfo is the daemon public key
+Daemon：
 
-Mobile client:
+- 本地保存 connectivity identity。
+- 用 daemon private key 签名 invitation。
+- 后续 daemon transport 使用 self-signed Ed25519 certificate；certificate 的 SubjectPublicKeyInfo 就是 daemon public key。
 
-- stores its app client identity in platform secure storage
-- signs pairing responses
-- authenticates later daemon transports with a self-signed Ed25519
-  certificate whose SubjectPublicKeyInfo is the client public key
+Mobile client：
 
-The public-key fingerprint is:
+- 使用 platform secure storage 保存 app client identity。
+- 用 client private key 签名 pairing response。
+- 后续 daemon transport 使用 self-signed Ed25519 certificate；certificate 的 SubjectPublicKeyInfo 就是 client public key。
+
+Public-key fingerprint：
 
 ```text
 fingerprint = lowercase_hex(SHA-256(raw_ed25519_public_key))
 ```
 
-Display names are not trust identities.
+Display name 不是 trust identity。
 
 ## Protocol Version
 
-Current pairing protocol version:
+当前 pairing protocol version：
 
 ```text
 2
 ```
 
-Version `2` uses Ed25519 public keys and signatures, SHA-256 fingerprints, and
-the canonical transcripts below.
+Version `2` 使用 Ed25519 public keys/signatures、SHA-256 fingerprints，以及下面定义的 canonical transcripts。
 
 ## Invitation
 
-`tunnel pair` creates one short-lived, one-time invitation. The current
-daemon invitation TTL is 5 minutes.
+`tunnel pair` 创建一个短期、一次性的 invitation。当前 daemon invitation TTL 是 5 minutes。
 
-JSON invitation fields:
+JSON invitation fields：
 
 - `version`
 - `account_id`
@@ -73,11 +69,9 @@ JSON invitation fields:
 - `relay_base_url`
 - `signature`
 
-`computer_public_key` is 32 raw Ed25519 public-key bytes encoded as lowercase
-hex. `computer_fingerprint` must equal
-`SHA-256(computer_public_key_raw_bytes)`.
+`computer_public_key` 是 32 bytes raw Ed25519 public key，lowercase hex 编码。`computer_fingerprint` 必须等于 `SHA-256(computer_public_key_raw_bytes)`。
 
-The daemon signature is Ed25519 over the canonical invitation transcript:
+Daemon signature 是 Ed25519 over canonical invitation transcript：
 
 ```text
 domain = "tunnel-pairing-invitation-v1"
@@ -95,39 +89,33 @@ fields, in order:
 - expires_at
 ```
 
-Each transcript string or byte field is length-prefixed by the implementation
-canonical encoder. Receivers must verify against the canonical transcript, not
-against raw JSON byte order.
+每个 transcript field 都通过 canonical encoder 做 length prefix。Receiver 必须验证 canonical transcript，不能依赖 JSON 原始字节顺序。
 
-The mobile client must reject an invitation when:
+Mobile client 必须拒绝这些 invitation：
 
-- `version` is not `2`
-- a required field is missing
-- the invitation is expired
-- `account_id` does not match the authenticated Relay account
-- `computer_public_key` is not 32 bytes
-- `computer_fingerprint` does not match the public key
-- the Ed25519 signature fails
+- `version != 2`
+- required field 缺失
+- invitation expired
+- `account_id` 和当前 authenticated Relay account 不匹配
+- `computer_public_key` 不是 32 bytes
+- `computer_fingerprint` 和 public key 不匹配
+- Ed25519 signature 失败
 
 ## Compact QR Form
 
-Implementations may encode the same invitation as a compact QR payload:
+实现可以把同一个 invitation 编成 compact QR payload：
 
 ```text
 TP2:<base45-payload>
 ```
 
-The compact payload is an encoding of the same version, account-scoped context,
-computer id, invitation id, correlation id, nonce, expiry, computer public key,
-signature, and display name. Account id and Relay base URL may come from the
-authenticated app context for compact imports. The decoded invitation must
-validate identically to the JSON invitation before it is trusted.
+Compact payload 表达同样的 version、account-scoped context、computer id、invitation id、correlation id、nonce、expiry、computer public key、signature、display name。Compact import 可以从 authenticated app context 获取 `account_id` 和 `relay_base_url`。解码后的 invitation 必须按 JSON invitation 同样规则验证。
 
 ## Android Response
 
-The mobile client signs an Android response after validating the invitation.
+Mobile client 验证 invitation 后签名 Android response。
 
-JSON response fields:
+JSON response fields：
 
 - `version`
 - `account_id`
@@ -138,11 +126,9 @@ JSON response fields:
 - `client_display_name`
 - `signature`
 
-`client_public_key` is 32 raw Ed25519 public-key bytes encoded as lowercase
-hex. `client_fingerprint` must equal
-`SHA-256(client_public_key_raw_bytes)`.
+`client_public_key` 是 32 bytes raw Ed25519 public key，lowercase hex 编码。`client_fingerprint` 必须等于 `SHA-256(client_public_key_raw_bytes)`。
 
-The client signature is Ed25519 over the canonical Android response transcript:
+Client signature 是 Ed25519 over canonical Android response transcript：
 
 ```text
 domain = "tunnel-pairing-android-response-v1"
@@ -156,65 +142,61 @@ fields, in order:
 - client_display_name
 ```
 
-The daemon must reject the response when:
+Daemon 必须拒绝这些 response：
 
-- `version` is not `2`
-- `account_id`, `invitation_id`, or `correlation_id` differs from the
-  invitation record
-- the invitation is missing, expired, or already consumed
-- `client_public_key` is not 32 bytes
-- `client_fingerprint` does not match the public key
-- the Ed25519 signature fails
+- `version != 2`
+- `account_id`、`invitation_id`、`correlation_id` 和 invitation record 不匹配
+- invitation missing、expired、already consumed
+- `client_public_key` 不是 32 bytes
+- `client_fingerprint` 和 public key 不匹配
+- Ed25519 signature 失败
 
 ## Relay Pairing Transport
 
-Relay participates in pairing transport but not trust establishment.
+Relay 参与 pairing transport，但不建立 trust。
 
-Daemon reservation:
+Daemon reservation：
 
-1. daemon connects to `GET /connectivity/computer/ws`
-2. daemon sends `pair_invitation_reserve`
-3. Relay reserves a live correlation for the authenticated daemon account
-4. Relay replies with `pair_invitation_reserved`
+1. daemon 连接 `GET /connectivity/computer/ws`
+2. daemon 发送 `pair_invitation_reserve`
+3. Relay 为 authenticated daemon account 预留 live correlation
+4. Relay 返回 `pair_invitation_reserved`
 
-Mobile response submission:
+Mobile response submission：
 
 ```text
 POST /api/pairing/responses
 Authorization: Bearer <app-access-token>
 ```
 
-Relay must validate:
+Relay 必须验证：
 
-- app bearer token is valid
-- app session has a bound client fingerprint
-- submitted `account_id` matches the authenticated app account
-- submitted `client_fingerprint` matches the app session fingerprint
-- correlation id exists, is live, and belongs to a daemon under the same
-  account
+- app bearer token 有效
+- app session 绑定了 client fingerprint
+- submitted `account_id` 匹配 authenticated app account
+- submitted `client_fingerprint` 匹配 app session fingerprint
+- correlation id 存在、未过期，并且属于同 account 下的 daemon
 
-Relay then forwards the signed response to the daemon as
-`pair_response_forward`. Relay must not modify signed fields.
+Relay 然后以 `pair_response_forward` 把 signed response 转发给 daemon。Relay 不得修改 signed fields。
 
 ## SAS
 
-SAS means Short Authentication String. It lets the human operator detect
-network-side public-key substitution.
+SAS 是 Short Authentication String，用来让人发现 network-side public-key substitution。
 
-Both sides compute the SAS from exactly these inputs, in order:
+两端用完全相同的输入计算 SAS，顺序固定：
 
-1. `computer_public_key` as 32 raw bytes
-2. `client_public_key` as 32 raw bytes
-3. `invitation_id` as UTF-8 bytes
-4. `nonce` as raw bytes
+1. `computer_public_key` raw 32 bytes
+2. `client_public_key` raw 32 bytes
+3. `invitation_id` UTF-8 bytes
+4. `nonce` raw bytes
 
-Each input is encoded as:
+每个输入编码为：
 
 ```text
 u16be(length) || bytes
 ```
 
-The algorithm is:
+算法：
 
 ```text
 canonical = lp(computer_public_key)
@@ -228,38 +210,35 @@ sas     = short mod 1_000_000
 display = sas as zero-padded 6 decimal digits
 ```
 
-This gives about 20 bits of human-confirmed MITM resistance. It is not a
-password, a shared secret, or a network-verifiable token.
+它大约提供 20 bits 的 human-confirmed MITM resistance。它不是 password、shared secret 或 network-verifiable token。
 
-Relay must not auto-compare SAS values. The SAS exists specifically because
-Relay is not trusted to prove that both endpoints saw the same keys.
+Relay 不能自动比较 SAS，因为 SAS 存在的原因正是 Relay 不被信任来证明两端看到了相同 key。
 
 ## Trust Completion
 
-Pairing is complete only after SAS confirmation.
+SAS 确认前，pairing 不算完成。
 
-Daemon completion:
+Daemon completion：
 
-1. daemon stores the verified response as pending
-2. daemon CLI shows the SAS and asks the operator to enter/confirm it
-3. if the SAS matches, daemon marks the invitation consumed
-4. daemon persists the Android client public key/fingerprint as trusted
-5. daemon sends `pair_completed` to Relay
+1. daemon 把 verified response 存成 pending
+2. daemon CLI 展示 SAS 并要求 operator 输入/确认
+3. SAS 匹配后，daemon 标记 invitation consumed
+4. daemon 持久化 Android client public key/fingerprint 为 trusted
+5. daemon 向 Relay 发送 `pair_completed`
 
-Mobile completion:
+Mobile completion：
 
-1. Android stores a pending pairing record after response submission
-2. Android shows the SAS to the user
-3. Android waits for Relay realtime to report the paired computer as visible
-4. Android persists the trusted computer record locally
-5. Android clears pending pairing state
+1. Android response submission 后保存 pending pairing record
+2. Android 向用户展示 SAS
+3. Android 等 Relay realtime 报告 paired computer visible
+4. Android 持久化 trusted computer record
+5. Android 清理 pending pairing state
 
-If either side reports mismatch, expiry, account mismatch, invalid signature,
-or missing pending state, pairing fails closed. Invitations are one-time use.
+任何一侧出现 mismatch、expiry、account mismatch、invalid signature、missing pending state，都必须 fail closed。Invitation 一次性使用。
 
 ## Local Persistence
 
-Daemon stores, under daemon-local state with private permissions:
+Daemon 使用 daemon-local private state 保存：
 
 - Ed25519 connectivity identity
 - invitation records
@@ -267,38 +246,34 @@ Daemon stores, under daemon-local state with private permissions:
 - trusted Android clients
 - revoked Android clients
 
-Android stores, in app-local protected storage:
+Android 使用 app-local protected storage 保存：
 
 - Ed25519 client identity
 - pending pairing records
 - trusted computer records
 - Relay app session credentials
 
-Relay stores only live pairing correlations and live visibility/routing state.
-Relay is not the durable trusted-client database.
+Relay 只保存 live pairing correlations 和 live visibility/routing state。Relay 不是 durable trusted-client database。
 
 ## Revocation
 
-The daemon is authoritative for trust revocation.
+Daemon 是 trust revocation 的 authority。
 
-After `tunnel pair revoke <fingerprint>`:
+执行 `tunnel pair revoke <fingerprint>` 后：
 
-- daemon marks/removes the trusted client locally
-- daemon rejects future daemon transport handshakes from that fingerprint
-- daemon closes active connections and interactive ownership for that client
-- daemon notifies Relay with `client_revoked`
-- Relay removes derived live visibility and closes affected rendezvous/fallback
-  state
-- the mobile client must stop treating the computer as trusted
+- daemon 本地标记/移除 trusted client
+- daemon 拒绝该 fingerprint 的未来 daemon transport handshake
+- daemon 关闭该 client 的 active connections 和 interactive ownership
+- daemon 用 `client_revoked` 通知 Relay
+- Relay 移除 derived live visibility，并关闭相关 rendezvous/fallback state
+- mobile client 必须停止把该 computer 当作 trusted
 
 ## Transport Consequence
 
-Pairing output is:
+Pairing 的产物：
 
-- a pinned daemon identity on the mobile client
-- a pinned mobile client identity on the daemon
-- local trust records on both endpoints
+- mobile client 上的 pinned daemon identity
+- daemon 上的 pinned mobile client identity
+- 两端本地 trust records
 
-Later direct or Relay-fallback daemon transports use those pinned public keys
-to authenticate a fresh TLS 1.3 handshake. The symmetric traffic keys are
-fresh per transport connection and are not stored by pairing.
+后续 direct 或 Relay-fallback daemon transport 使用这些 pinned public keys 认证新的 TLS 1.3 handshake。Symmetric traffic keys 每个 transport connection 都重新生成，不由 pairing 持久保存。
