@@ -57,6 +57,36 @@ Certificate chain validation is not the trust root for this transport. Pairing
 establishes the trusted public keys; TLS proves possession and derives fresh
 session keys.
 
+TLS 1.3 chooses the concrete ephemeral key exchange group, HKDF traffic-key
+derivation, and AEAD packet protection through the QUIC/TLS implementation.
+This compatibility line requires TLS 1.3, Ed25519 endpoint identities,
+certificate/public-key pinning, ALPN `tunnel-conn/1`, no 0-RTT, and fresh
+per-connection traffic keys; it does not require one fixed TLS cipher suite.
+
+## Path Modes And Packet Carriers
+
+The daemon transport is path-agnostic above QUIC. Direct and Relay fallback
+use the same TLS identity checks, control stream, interactive streams, frame
+registry, and JSON payload families.
+
+Direct path:
+
+- QUIC packets are sent over UDP between Android and daemon.
+- Relay realtime carries short-lived rendezvous hints.
+- STUN is used only to discover observed public UDP addresses.
+- Relay may assist discovery but cannot decrypt daemon transport payloads.
+
+Relay fallback path:
+
+- Relay realtime issues side-specific, short-lived, single-use tunnel tokens.
+- Android and daemon redeem those tokens at `GET /connectivity/tunnel/ws`.
+- The fallback WebSocket carries binary QUIC packets only.
+- Relay forwards encrypted packets unchanged and must not parse session frames.
+
+Relay fallback is a carrier for encrypted QUIC packets, not a terminal/session
+protocol. Any behavior difference between direct and Relay fallback should be
+limited to availability and diagnostics, not trust or plaintext access.
+
 ## Protocol Version
 
 `hello.protocol_version` is a single integer. The current daemon transport
