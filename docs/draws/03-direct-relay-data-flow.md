@@ -11,6 +11,7 @@ flowchart TD
   classDef daemon fill:#eaf8ef,stroke:#2b8a4b,color:#102f1c
   classDef decision fill:#f3ecff,stroke:#7557c2,color:#26164a
   classDef success fill:#eaf8ef,stroke:#2b8a4b,color:#102f1c
+  classDef danger fill:#ffe8e8,stroke:#c0362c,color:#4a1111
 
   A[Android picks trusted online computer]:::mobile
   B[Generate attempt_id]:::mobile
@@ -25,10 +26,15 @@ flowchart TD
   K[Relay sends relay_tunnel_ready<br/>side-specific tokens]:::relay
   L[Both sides connect<br/>/connectivity/tunnel/ws]:::relay
   M[Run same QUIC/TLS daemon transport<br/>over encrypted packet tunnel]:::success
+  N[Fail closed<br/>do not fallback/retry as network error]:::danger
+  O[Revocation / direct_session_close<br/>daemon closes bound transport]:::danger
 
   A --> B --> C --> D --> E --> F --> G --> H
   H -->|yes| I
   H -->|no / skipped / failed| J --> K --> L --> M
+  H -->|identity / pin / ALPN / protocol failure| N
+  I --> O
+  M --> O
 ```
 
 ## Direct data flow
@@ -113,6 +119,13 @@ Android 可以进入 Relay fallback 的原因包括：
 - QUIC handshake failed。
 - authorization superseded by newer attempt。
 - network path temporarily unavailable。
+
+Android 不得因为这些原因进入 Relay fallback：
+
+- daemon certificate/public key pin mismatch。
+- client identity rejected by daemon trusted roster。
+- ALPN mismatch。
+- daemon transport protocol version/order failure。
 
 Relay 会在这些情况清理 live state：
 

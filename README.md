@@ -11,7 +11,7 @@ Agent Tunnel 跨仓库协议文档的 SSOT。
 - `../agent-tunnel` - Go Relay、tunnel daemon、STUN、direct UDP、fallback tunnel、pairing state、daemon transport 实现。
 - `../agent-tunnel-android` - official Android companion 实现和 mobile UX/docs。
 
-改动这里的 protocol 文档时，通常也需要在一个或两个实现仓库里同步实现、测试或本地指针。
+改动这里的 protocol 文档时，通常也需要在一个或两个实现仓库里同步实现、测试或本地导航。实现仓库不应该维护第二份 current protocol mirror。
 
 ## 文档入口
 
@@ -22,9 +22,13 @@ Agent Tunnel 跨仓库协议文档的 SSOT。
 - [Pairing](docs/pairing.md) - Ed25519 pairing transcript、Relay forwarding、SAS、trust completion、persistence、revocation。
 - [Relay Control Plane](docs/relay-control-plane.md) - Relay realtime auth、presence、pairing forwarding、direct rendezvous、fallback tunnel token、opaque packet forwarding。
 - [Daemon Transport Protocol](docs/protocol.md) - daemon-to-mobile QUIC transport、frame registry、payload、stream、security invariants、direct/relay carrier boundary。
+- [Security](docs/security.md) - trust boundary、attacker model、stolen token、malicious Relay、candidate abuse、revocation 和 fail-closed 规则。
+- [Implementation Status](docs/status/implementation-matrix.md) - 当前 Go/Android 实现与 SSOT 的验证状态、已知 gap 和升级 gate。
+- [Legacy](docs/legacy/README.md) - historical/superseded 设计，防止重新采用已经淘汰的 Relay session authority 等方案。
 
 ## 仓库规则
 
 - Fixture 必须是 synthetic 且不包含 secret。不要提交真实 terminal capture、credential、private key、tunnel token、device fingerprint、private path 或 user input。
 - Protocol-breaking change 必须更新负责该 surface 的文档，并说明 compatibility line 或 protocol version 迁移。
 - Relay 对 terminal bytes 和 fallback QUIC packets 保持 content-opaque，除非未来明确修改 protocol boundary。
+- Implementation repo 只保留 README/AGENTS/CLAUDE 的导航、implementation notes、tests、evidence、ops/fix docs；不要复制 endpoint table、frame registry、SAS transcript、security invariant 等 protocol facts。

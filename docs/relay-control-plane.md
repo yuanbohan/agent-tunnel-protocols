@@ -233,7 +233,8 @@ Rendezvous rules：
 - hints 是 short-lived；当前实现默认 30 seconds。
 - 同一 app session + computer 的新 attempt 会 supersede 老 attempt。
 - candidate list 必须有上限。
-- private candidate addresses 应限制在 private、link-local 或明确 test-allowed ranges。
+- private candidate addresses 必须限制在 private、link-local 或明确 test-allowed ranges。
+- endpoint 和 Relay 在 forwarding/probing 前都应拒绝 loopback、unspecified、multicast、broadcast、unexpected public IP、以及非 test mode 下的 documentation ranges。只做 `ip:port` parse 不足以满足当前安全规则。
 
 Relay 可以 route candidate hints，但不得从中推导 terminal/session semantics。
 
@@ -330,3 +331,5 @@ Relay failure 会影响：
 - account policy refresh
 
 Relay failure 不让 Relay 获得读取 daemon transport payload 的能力。现有 direct transport 可以继续，直到自身 path 关闭，或授权撤销通过其他机制传达到 endpoint。
+
+Revocation 的 authoritative source 是 daemon-local trusted roster。Daemon revoke 必须立即关闭本地 direct/fallback transports 和 interactive ownership；Relay notification 是 best-effort，用来清理 live visibility、fallback token 和 rendezvous state。Relay offline 或 notification failure 不会恢复被 revoke client 的 daemon transport 权限；下一次 daemon registration 会重新发布过滤后的 trusted roster。

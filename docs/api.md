@@ -4,7 +4,7 @@
 
 本文是 Agent Tunnel 当前 public Relay API 的跨仓库 SSOT。
 
-已在 2026-05-17 对照 `agent-tunnel/internal/relay/handler/new.go` 验证 endpoint inventory。`agent-tunnel/docs/api.md` 的详细实现文档已经迁到这里；实现仓库只保留本地指针。
+已在 2026-05-17 对照 `agent-tunnel/internal/relay/handler/new.go` 验证 public endpoint inventory。原 `agent-tunnel/docs/api.md` 的详细实现文档已经迁到这里；实现仓库只在 README/AGENTS/CLAUDE 保留导航和 implementation entry points。
 
 Relay API 负责 authentication、account policy、computer launch control plane、pairing response forwarding、connectivity realtime、direct rendezvous、fallback tunnel setup。它不是 mobile session data plane，不提供 session list、session detail、terminal attach、terminal frame replay、preview storage 或 input/resize API。
 
@@ -43,6 +43,10 @@ Realtime 和 packet tunnel：
 - `GET /device/ws`
 
 Operator routes 位于 local operator surface，不属于 public `/api/` contract。
+
+Local-only/internal routes 不属于 public Relay API contract：
+
+- `GET /internal/version`：local-only version probe，受 Relay local-only middleware 保护。
 
 旧 endpoint 不属于当前 compatibility line：
 
@@ -429,6 +433,8 @@ Important：
 
 Auth：app access token。
 
+当前实现说明：这个 endpoint 目前按 authenticated account + online `/device/ws` computer 授权。它没有要求 per-launch Ed25519 signature，也没有在 handler 层强制 pairing-derived visibility。这个能力等价于 app access token 持有者可以请求该 account 下 online computer 启动 command。见 [Security](security.md) 的 remote-command authority gate；如果产品要求 launch 只能来自 paired client，必须先调整实现，再把本段改成 paired-client operation。
+
 Request：
 
 ```json
@@ -651,7 +657,9 @@ WebSocket 只接受 binary messages。每个 binary message 是一个 opaque enc
 
 Relay 不解析 QUIC，不读取 TLS plaintext，不理解 daemon transport frame，不读取 terminal bytes、preview、input 或 resize。
 
-## Legacy Agent And Device WebSockets
+## Retained Agent And Device WebSockets
+
+这些 WebSocket 仍是当前实现的一部分，但不是 official mobile companion 的 session data plane。不要把它们理解成可恢复的 Relay session list/detail/attach protocol。
 
 ### `GET /agent/ws`
 

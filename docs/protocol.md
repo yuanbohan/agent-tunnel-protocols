@@ -4,7 +4,7 @@
 
 本文是 daemon-to-mobile connectivity transport 的跨仓库 SSOT。它定义 official mobile companion 和 Go tunnel/daemon 共享的 protocol surface。
 
-实现仓库可以保留 local mirror、implementation notes 和 tests，但 frame registry、payload families、transport security invariants、session metadata boundary 的兼容性决策要先在这里更新。
+实现仓库可以保留 implementation notes 和 tests，但不得维护第二份 current frame registry、payload family、transport security invariant 或 session metadata contract。兼容性决策只在这里更新。
 
 相关流程图：
 

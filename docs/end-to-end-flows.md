@@ -160,14 +160,14 @@ Android app
   -> daemon transport frames
 ```
 
-Relay fallback 在 transport security 上不比 direct 弱：
+Relay fallback 对 terminal plaintext confidentiality 和 endpoint identity 的保护不比 direct 弱：
 
 - 两条路径都用相同 pinned peer identities。
 - 两条路径都协商新的 TLS 1.3 session keys。
 - Relay fallback 只转发 encrypted QUIC packets。
 - Relay 不解析 QUIC、terminal bytes、preview、snapshot、input、resize、path badge 或 daemon session semantics。
 
-Relay 可以影响可用性，例如不转发 rendezvous hints 或拒绝 fallback setup；但不能解密 direct 或 fallback 的 daemon transport payload。
+Relay 可以影响可用性，例如不转发 rendezvous hints、拒绝 fallback setup 或撤销 live authorization；但不能解密 direct 或 fallback 的 daemon transport payload。identity/pin/protocol failure 不是可 fallback 的普通网络失败，必须 fail closed。
 
 ## 4. 进入 Detail 后，移动端发送消息怎么走
 

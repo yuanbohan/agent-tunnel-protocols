@@ -4,7 +4,7 @@
 
 本文是 Agent Tunnel 当前 cross-repository architecture 的 SSOT。
 
-已在 2026-05-17 从 `agent-tunnel/docs/architecture.md` 迁入，并按 direct-first + Relay fallback 的当前实现重新校准。实现仓库可以保留本地 package map、测试入口和运维细节，但 shared system boundary 要指向这里。
+已在 2026-05-17 从原 `agent-tunnel/docs/architecture.md` 迁入，并按 direct-first + Relay fallback 的当前实现重新校准。实现仓库可以保留本地 package map、测试入口、implementation notes 和运维细节，但 shared system boundary 要指向这里。
 
 ## System Shape
 
