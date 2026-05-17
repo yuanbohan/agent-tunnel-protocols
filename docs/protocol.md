@@ -1,125 +1,121 @@
 # Daemon Transport Protocol
 
-## Status
+## 状态
 
-This document is the cross-repository source of truth for the current
-daemon-to-mobile connectivity transport. It defines the protocol surface shared
-by the official mobile companion and the Go tunnel/daemon implementation.
+本文是 daemon-to-mobile connectivity transport 的跨仓库 SSOT。它定义 official mobile companion 和 Go tunnel/daemon 共享的 protocol surface。
 
-Implementation repositories may keep local mirrors, implementation notes, and
-tests, but compatibility decisions for the frame registry, payload families,
-transport security invariants, and session metadata boundary should be made
-here first.
+实现仓库可以保留 implementation notes 和 tests，但不得维护第二份 current frame registry、payload family、transport security invariant 或 session metadata contract。兼容性决策只在这里更新。
+
+相关流程图：
+
+- [Direct And Relay](draws/03-direct-relay-data-flow.md)
+- [Detail Input](draws/04-detail-input.md)
 
 ## Ownership Boundary
 
-The daemon transport carries mobile-visible session state and interactive
-terminal traffic after a mobile client has selected and connected to one
-trusted computer.
+Daemon transport 在 mobile client 已选择并连接到一台 trusted computer 后，承载 mobile-visible session state 和 interactive terminal traffic。
 
-It owns:
+它负责：
 
 - daemon-to-mobile session roster synchronization
-- preview subscription and preview snapshots
-- interactive session grant/denial/release
-- terminal snapshot and live-byte streams
-- mobile-to-daemon input and resize messages
+- preview subscription 和 preview snapshots
+- interactive session grant / denial / release
+- terminal snapshot 和 live-byte streams
+- mobile-to-daemon input 和 resize messages
 - transport path diagnostics
 
-It does not own:
+它不负责：
 
 - Relay app authentication
 - Relay pairing transport
 - Relay computer presence
-- Relay rendezvous or fallback tunnel authorization
+- Relay rendezvous 或 fallback tunnel authorization
 - account tier policy
 - classic Relay session list/detail/attach APIs
-- local daemon broker mechanics that are not mobile-visible
+- 不属于 mobile-visible contract 的 local daemon broker mechanics
 
-Relay may route encrypted fallback QUIC packets, but it must not parse this
-session transport or derive terminal/session semantics from it.
+Relay 可以 route encrypted fallback QUIC packets，但不得解析 session transport 或从中推导 terminal/session semantics。
 
 ## Transport Security
 
-The transport uses QUIC with TLS 1.3. Both daemon and mobile endpoints present
-self-signed Ed25519 certificates whose SubjectPublicKeyInfo is the paired device
-public key.
+Transport 使用 QUIC with TLS 1.3。Daemon 和 mobile endpoints 都展示 self-signed Ed25519 certificates；certificate 的 SubjectPublicKeyInfo 是 pairing 时建立的 device public key。
 
-Implementations must enforce:
+实现必须 enforce：
 
 - mutual certificate presentation
-- peer public-key pinning against the paired device identity
+- peer public-key pinning against paired device identity
 - ALPN `tunnel-conn/1`
-- no QUIC 0-RTT use for terminal input or session traffic
-- fresh transport session keys per connection
+- terminal input 和 session traffic 不使用 QUIC 0-RTT
+- 每次 connection 都生成 fresh transport session keys
 
-Certificate chain validation is not the trust root for this transport. Pairing
-establishes the trusted public keys; TLS proves possession and derives fresh
-session keys.
+Certificate chain validation 不是 trust root。Pairing 建立 trusted public keys；TLS 证明 private key possession 并派生 fresh session keys。
+
+TLS 1.3 的具体 ephemeral key exchange group、HKDF traffic-key derivation、AEAD packet protection 由 QUIC/TLS implementation 协商。本 compatibility line 要求 TLS 1.3、Ed25519 endpoint identities、certificate/public-key pinning、ALPN `tunnel-conn/1`、no 0-RTT、fresh per-connection traffic keys；不固定一个 TLS cipher suite。
+
+## Path Modes And Packet Carriers
+
+Daemon transport 在 QUIC 之上 path-agnostic。Direct 和 Relay fallback 使用相同 TLS identity checks、control stream、interactive streams、frame registry、JSON payload families。
+
+Direct path：
+
+- QUIC packets 直接走 Android 和 daemon 之间的 UDP。
+- Relay realtime 只承载 short-lived rendezvous hints。
+- STUN 只用于发现 observed public UDP address。
+- Relay 可辅助 discovery，但不能解密 daemon transport payload。
+
+Relay fallback path：
+
+- Relay realtime 发 side-specific、short-lived、single-use tunnel tokens。
+- Android 和 daemon 用 token 连接 `GET /connectivity/tunnel/ws`。
+- Fallback WebSocket 只承载 binary QUIC packets。
+- Relay 原样转发 encrypted packets，不解析 session frames。
+
+Relay fallback 是 encrypted QUIC packets 的 carrier，不是 terminal/session protocol。Direct 和 Relay fallback 的差异应限于可用性和 diagnostics，不应影响 trust 或 plaintext access。
 
 ## Protocol Version
 
-`hello.protocol_version` is a single integer. The current daemon transport
-version is:
+`hello.protocol_version` 是单个 integer。当前 daemon transport version：
 
 ```text
 2
 ```
 
-Version `2` uses JSON payloads for typed control frames. A future CBOR,
-protobuf, or otherwise non-JSON encoding profile requires a new protocol
-version or an explicit compatibility-line decision. Implementations must not
-silently reinterpret version `2` as a different payload encoding.
+Version `2` 对 typed control frames 使用 JSON payload。未来 CBOR、protobuf 或其他 non-JSON encoding profile 需要新的 protocol version 或明确 compatibility-line decision。实现不得把 version `2` 静默解释成其他 encoding。
 
-There is no in-band downgrade negotiation in this revision. If a peer sends a
-different version, the receiver closes the session with
-`protocol_version_mismatch`.
+本版本没有 in-band downgrade negotiation。Peer version 不匹配时，receiver 使用 `protocol_version_mismatch` 关闭 session。
 
 ## Stream Model
 
-One daemon connection uses:
+一个 daemon connection 使用：
 
-- one long-lived bidirectional control stream opened by the mobile client
-- zero or more daemon-initiated unidirectional interactive streams
+- 一个 mobile client 打开的 long-lived bidirectional control stream
+- 零个或多个 daemon-initiated unidirectional interactive streams
 
-The control stream carries session metadata, preview, interactive control,
-input, resize, path diagnostics, and error frames. Each interactive stream
-belongs to one granted interactive session lifetime and carries only that
-session's snapshot boundary frames, snapshot chunks, and live terminal bytes
-from daemon to mobile.
+Control stream 承载 session metadata、preview、interactive control、input、resize、path diagnostics、error frames。
 
-The same session does not support multiple concurrent interactive attach
-lifetimes in this revision.
+每个 interactive stream 属于一次 granted interactive session lifetime，只承载这个 session 的 snapshot boundary frames、snapshot chunks、live terminal bytes，方向是 daemon -> mobile。
+
+同一个 session 在当前版本不支持多个 concurrent interactive attach lifetimes。
 
 ## Frame Wire Format
 
-Every control or interactive stream frame uses:
+所有 control 或 interactive stream frame 使用：
 
 ```text
 [1-byte type] [varint payload_length] [payload bytes]
 ```
 
-`payload_length` is the byte length of the payload.
+`payload_length` 是 payload byte length。
 
-`payload_length` uses the QUIC variable-length integer encoding: the two most
-significant bits of the first byte encode the total integer length (`00` = 1
-byte, `01` = 2 bytes, `10` = 4 bytes, `11` = 8 bytes), and the remaining bits
-encode an unsigned big-endian integer value.
+`payload_length` 使用 QUIC variable-length integer encoding：第一个 byte 的两个最高位表示总 integer length（`00` = 1 byte，`01` = 2 bytes，`10` = 4 bytes，`11` = 8 bytes），剩余 bits 表示 unsigned big-endian integer。
 
-The maximum payload size is 1 MiB (`1 << 20`) per frame. Senders must split
-larger terminal snapshots or live output bursts across multiple
-`snapshot_chunk` or `live_bytes` frames. Receivers must reject frames whose
-declared payload length is larger than 1 MiB.
+每个 frame 最大 payload size 是 1 MiB (`1 << 20`)。更大的 terminal snapshots 或 live output bursts 必须拆成多个 `snapshot_chunk` 或 `live_bytes` frames。Receiver 必须拒绝 declared payload length 超过 1 MiB 的 frame。
 
-Typed control payloads are JSON encoded as UTF-8. `snapshot_chunk` and
-`live_bytes` carry raw PTY bytes and are not JSON wrapped.
+Typed control payload 使用 UTF-8 JSON。`snapshot_chunk` 和 `live_bytes` 承载 raw PTY bytes，不包 JSON。
 
-Receivers must tolerate unknown frame type values by dropping or ignoring them
-without closing the whole transport. Receivers must ignore unknown JSON fields
-inside known JSON payloads.
+Receiver 必须 tolerate unknown frame type：drop/ignore，不关闭整个 transport。Known JSON payload 内 unknown fields 也要 ignore。
 
-Malformed frames, invalid varints, oversized payloads, incomplete payloads, and
-malformed JSON for known JSON frame families remain errors.
+Malformed frame、invalid varint、oversized payload、incomplete payload、known JSON frame 的 malformed JSON 仍然是 error。
 
 ## Frame Type Registry
 
@@ -146,27 +142,24 @@ malformed JSON for known JSON frame families remain errors.
 | `0x13` | `snapshot_end` | JSON |
 | `0x7f` | `error` | JSON |
 
-Frame type values not listed here are unassigned in this compatibility line.
+未列出的 frame type values 在当前 compatibility line 中未分配。
 
 ## Control Stream Ordering
 
-After QUIC/TLS connection setup:
+QUIC/TLS connection setup 后：
 
-1. mobile sends `hello`
-2. daemon validates `hello`
-3. daemon sends `hello`
-4. daemon sends `session_index`
-5. daemon may send `path_state`
-6. only after `session_index` may daemon send session deltas, preview
-   snapshots, or interactive grant/denial controls
+1. mobile 发送 `hello`
+2. daemon 验证 `hello`
+3. daemon 发送 `hello`
+4. daemon 发送 `session_index`
+5. daemon 可以发送 `path_state`
+6. 只有在 `session_index` 之后，daemon 才能发送 session deltas、preview snapshots、interactive grant/denial controls
 
-Mobile clients must not process session or preview frames before applying the
-initial `session_index`.
+Mobile client 在 apply initial `session_index` 前，不得处理 session 或 preview frames。
 
 ## JSON Payload Families
 
-The field lists below define the compatibility surface. Receivers must ignore
-unknown JSON fields.
+下面字段列表定义 compatibility surface。Receiver 必须 ignore unknown JSON fields。
 
 ### `hello`
 
@@ -179,19 +172,13 @@ unknown JSON fields.
 
 - `sessions`: array of `SessionMetadata`
 
-The daemon sends the full current session set known to the selected computer.
-If a Relay-launched `tunnel run` has registered with the local daemon before
-the mobile transport connects, the resulting `session_id` must be present in
-the initial `session_index`.
+Daemon 发送所选 computer 当前全部 session set。如果 Relay-launched `tunnel run` 在 mobile transport 连接前已经注册到 local daemon，初始 `session_index` 必须包含它的 `session_id`。
 
 ### `session_upsert`
 
 - `session`: `SessionMetadata`
 
-The daemon sends a full replacement metadata object when a session appears or
-changes. If a Relay-launched `tunnel run` registers after the mobile transport
-is already connected, the daemon publishes that same `session_id` as a
-`session_upsert`.
+Session 出现或变化时，daemon 发送完整 replacement metadata object。如果 Relay-launched `tunnel run` 在 mobile transport 已连接后注册，daemon 用 `session_upsert` 发布同一个 `session_id`。
 
 ### `session_gone`
 
@@ -211,8 +198,7 @@ is already connected, the daemon publishes that same `session_id` as a
 - `preview`
 - `updated_at` (optional)
 
-Preview text is delivered separately from session metadata so list rows and
-preview content can update independently.
+Preview text 独立于 session metadata 传输，这样 list row 和 preview content 可以独立更新。
 
 ### `interactive_request`
 
@@ -227,18 +213,14 @@ preview content can update independently.
 - `cols`
 - `rows`
 
-`interactive_stream_id` is the QUIC stream id of the daemon-initiated
-unidirectional stream that carries the interactive snapshot and live bytes.
-That stream begins with `snapshot_begin`, then zero or more `snapshot_chunk`
-frames, then `snapshot_end`; later `live_bytes` frames for the same interactive
-lifetime follow on the same stream.
+`interactive_stream_id` 是 daemon-initiated unidirectional stream 的 QUIC stream id。该 stream 先发 `snapshot_begin`，然后零个或多个 `snapshot_chunk`，再发 `snapshot_end`，之后同一 interactive lifetime 的 `live_bytes` 继续走同一 stream。
 
 ### `interactive_denied`
 
 - `session_id`
 - `reason`
 
-Receivers must tolerate unknown `reason` values. Current known values are:
+Receiver 必须 tolerate unknown `reason` values。当前 known values：
 
 - `device_not_trusted`
 - `session_unavailable`
@@ -274,21 +256,18 @@ Receivers must tolerate unknown `reason` values. Current known values are:
 - `direct_setup_latency_ms` (optional)
 - `relay_setup_latency_ms` (optional)
 
-`path_state` is advisory. The app connection manager remains the source of the
-current path badge. Daemon transport reports diagnostics for the path that was
-used; it does not override app-side path selection or badge authority.
+`path_state` 是 advisory。App connection manager 仍是 current path badge 的 authority。Daemon transport 只报告所用 path 的 diagnostics，不覆盖 app-side path selection 或 badge authority。
 
 ### `error`
 
 - `code`
 - `message` (optional)
 
-Receivers must tolerate unknown `code` values.
+Receiver 必须 tolerate unknown `code` values。
 
 ### `snapshot_begin`
 
-Sent on the daemon-initiated interactive stream announced by
-`interactive_granted.interactive_stream_id`.
+在 `interactive_granted.interactive_stream_id` 指向的 daemon-initiated interactive stream 上发送。
 
 - `session_id`
 - `cols`
@@ -296,26 +275,24 @@ Sent on the daemon-initiated interactive stream announced by
 
 ### `snapshot_chunk`
 
-Raw PTY snapshot bytes. No JSON wrapper.
+Raw PTY snapshot bytes。无 JSON wrapper。
 
 ### `snapshot_end`
 
-Sent on the same daemon-initiated interactive stream as the preceding
-`snapshot_begin` and `snapshot_chunk` frames.
+在同一个 interactive stream 上发送。
 
 - `session_id` (optional)
 - `chunk_count` (optional)
 
 ### `live_bytes`
 
-Raw PTY output bytes after snapshot completion. No JSON wrapper.
+Snapshot completion 后的 raw PTY output bytes。无 JSON wrapper。
 
 ## Session Metadata
 
-`SessionMetadata` is the daemon transport session payload shape used by
-`session_index` and `session_upsert`.
+`SessionMetadata` 是 `session_index` 和 `session_upsert` 使用的 daemon transport session payload shape。
 
-Current fields:
+当前字段：
 
 - `session_id`
 - `label`
@@ -326,44 +303,13 @@ Current fields:
 - `updated_at`
 - `online`
 
-The selected computer transport already scopes metadata to one trusted
-computer. `session_id` is sufficient for matching Relay launch correlation
-results to later daemon transport state in this revision.
+所选 computer transport 已经把 metadata scope 限制在一个 trusted computer 内。当前版本用 `session_id` 足够把 Relay launch correlation result 匹配到后续 daemon transport state。
 
-`SessionMetadata` must not carry:
+`SessionMetadata` 不得携带：
 
 - terminal snapshot bytes
 - live terminal bytes
-- preview text payloads such as `preview` or `latest_preview`
-- account tier, entitlement, subscription, or policy fields
+- preview text payloads，例如 `preview` 或 `latest_preview`
+- account tier、entitlement、subscription、policy fields
 - Relay-only launch correlation fields
 - direct/fallback path authority fields
-
-Preview text is delivered with `preview_snapshot`. Terminal bytes are delivered
-on interactive streams. Tier and account policy remain outside the daemon
-transport.
-
-## Interactive Recovery
-
-After reconnect, the mobile client reopens a fresh daemon transport, reapplies
-desired preview subscriptions, and sends new `interactive_request` messages for
-sessions it still wants to use interactively. The daemon responds with fresh
-grant/denial results and new interactive streams.
-
-This protocol does not provide missed-byte replay. Recovery is based on fresh
-session metadata, fresh previews, and fresh interactive snapshots.
-
-## Compatibility Notes
-
-- Unknown JSON fields are ignored.
-- Unknown frame types are dropped or ignored.
-- Unknown `interactive_denied.reason` and `error.code` values are tolerated.
-- Version `2` payloads are JSON. Non-JSON profiles require a new version or
-  compatibility-line decision.
-- The Relay fallback packet tunnel is opaque to this protocol.
-
-## Fixture Hygiene
-
-Any future fixtures for this protocol must be synthetic and non-secret.
-Fixtures must not contain real credentials, private keys, tunnel tokens, device
-fingerprints, terminal captures, private file paths, or user input.
