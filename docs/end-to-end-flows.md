@@ -71,7 +71,9 @@ Android 不能只信 Relay presence。UI projection 会 join：
 - account policy (`free` / `pro`)
 - 每台 computer 的 daemon connection state
 
-本地 trusted 但 Relay 不可见，就显示 offline。Relay 可见但本地没有 trusted record，不会显示成 trusted computer。只有两边都匹配后，Android 才会为这台 computer 启动 daemon connection。
+本地 trusted 但 Relay 不可见，就显示 offline。Relay 可见但本地没有 trusted record，不会显示成 trusted computer。
+
+还有一个独立的 readiness gate：Android 可以为了 UI continuity 保留上一轮 realtime visibility，但 retained visibility 只能用于显示。只有当前 `/api/connectivity/ws` 处于 connected state，并且 local trust、Relay visibility、account policy 都匹配后，Android 才能为这台 computer 启动 daemon connection 或发送 `rendezvous_open` / `relay_tunnel_request`。`idle`、`connecting`、`offline`、auth-invalid 或 protocol-error 状态下，即使本地还保留了上一轮 `computer_visible`，也不能启动 direct/fallback transport。
 
 ## 1. Pairing 详细流程
 

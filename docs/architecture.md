@@ -156,6 +156,8 @@ Android companion 负责 mobile user experience 和 client-side security storage
 - terminal snapshot/live bytes replay and rendering。
 - diagnostics and debug export。
 
+Android companion 的 trusted-computer projection 和 daemon transport eligibility 是两个不同边界。Projection 可以使用本地 durable trust 和 retained realtime visibility 来避免 UI 在 lifecycle seam 中闪空；daemon transport eligibility 必须额外要求当前 `/api/connectivity/ws` connected，才能发送 rendezvous 或 fallback tunnel control-plane commands。
+
 Android 不负责：
 
 - 启动本地 PTY。
